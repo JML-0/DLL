@@ -1,0 +1,100 @@
+name: GitHub CI CD
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - "*"
+    branches:
+      - main
+
+jobs:
+
+  lint_commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Fetch at least 2 commits to ensure we get non-merge commits
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Validate commit messages
+        run: |
+          # Get the last non-merge commit and validate the message
+          git log --pretty=format:"%s" --no-merges -n 1 | python .github/scripts/validate_commit_msg.py
+
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pylint
+    - name: Analysing the code with pylint
+      run: |
+        pylint $(git ls-files '*.py')
+
+  doc-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+    - name: Install dependencies
+      run: |
+        pip install -r requirements/requirements_doc.txt
+    - name: Build documentation
+      run: |
+        cd doc
+        make html
+    - name: Upload HTML documentation artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation-html
+        path: doc/_build/html
+        retention-days: 7
+
+  doc-deploy:
+    needs: doc-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Clean destination folder
+      run: |
+        rm -rf version/dev && mkdir -p version/dev
+    - name: Download HTML documentation artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: documentation-html
+        path: version/dev
+    - name: Update apt-get
+      run: |
+        sudo apt-get update
+    - name: Display structure of version/dev
+      run: |
+        ls -R version/dev
+    - name: Deploy to gh-pages branch
+      if: contains(github.ref, 'refs/heads/main')
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        publish_dir: version/dev
+        publish_branch: gh-pages
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        commit_message: 'DOC: Update development documentation'
+        keep_files: true
+        force_orphan: true
